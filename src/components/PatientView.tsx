@@ -6,7 +6,7 @@ import {
   getPatientBySerial,
   calculateWaitTime,
   calculateAverageTime,
-} from "../utils/firebaseStorage";
+} from "../utils/storage";
 
 interface PatientViewProps {
   queue: Queue;
@@ -42,22 +42,15 @@ export default function PatientView({
 
   /* ---------------- REAL TIME UPDATE ---------------- */
 
-  const [currentTime, setCurrentTime] = useState(0);
-
   useEffect(() => {
-    // Initialize time
-    const initTime = Date.now();
-    setCurrentTime(initTime);
-
     const interval = setInterval(async () => {
       const updated = await getQueue(queue.id);
       if (updated) setQueue(updated);
-      setCurrentTime(Date.now()); // Update time for calculations
     }, 2000);
 
-    const unsubscribe = onQueueUpdate(async (queueId) => {
+    const unsubscribe = onQueueUpdate((queueId) => {
       if (queueId === queue.id) {
-        const updated = await getQueue(queueId);
+        const updated = getQueue(queueId);
         if (updated) setQueue(updated);
       }
     });
@@ -99,10 +92,8 @@ export default function PatientView({
 
   /* -------- FINAL WAIT TIME (SMART PREDICTION) -------- */
 
-  // Use calculateWaitTime with currentTime for smart prediction
-  // This automatically handles current patient's remaining time intelligently
-  // If current patient is taking longer (e.g., 20 min), it predicts remaining time accurately
-  const waitTime = calculateWaitTime(queue, patientNumber, currentTime);
+  // Use calculateWaitTime for wait time calculation
+  const waitTime = calculateWaitTime(queue, patientNumber);
 
   /* ---------------- UI ---------------- */
 

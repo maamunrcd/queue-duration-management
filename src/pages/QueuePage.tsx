@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import type { Queue } from "../types";
-import { getQueue, onQueueUpdate, joinQueue } from "../utils/firebaseStorage";
+import { getQueue, onQueueUpdate, joinQueue } from "../utils/storage";
+import { useTranslation } from "../hooks/useTranslation";
 import DoctorPanel from "../components/DoctorPanel";
 import PatientView from "../components/PatientView";
 
@@ -10,11 +11,14 @@ type ViewMode = "select" | "doctor" | "patient" | "confirmation";
 export default function QueuePage() {
   const { queueId } = useParams<{ queueId: string }>();
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const [queue, setQueue] = useState<Queue | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("select");
   const [secretInput, setSecretInput] = useState("");
   const [patientNumber, setPatientNumber] = useState("");
   const [patientName, setPatientName] = useState("");
+  const [patientMobile, setPatientMobile] = useState("");
+  const [patientAge, setPatientAge] = useState("");
   const [assignedSerial, setAssignedSerial] = useState<number | null>(null);
   const [error, setError] = useState("");
 
@@ -36,9 +40,9 @@ export default function QueuePage() {
     loadQueue();
 
     // Listen for real-time updates
-    const unsubscribe = onQueueUpdate(async (updatedQueueId) => {
+    const unsubscribe = onQueueUpdate((updatedQueueId) => {
       if (updatedQueueId === queueId) {
-        await loadQueue();
+        loadQueue();
       }
     });
 
@@ -96,7 +100,7 @@ export default function QueuePage() {
             onClick={() => navigate("/")}
             className="w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700"
           >
-            Admin Panel এ ফিরে যান
+            {t("queue.backToAdmin")}
           </button>
         </div>
       </div>
@@ -179,45 +183,118 @@ export default function QueuePage() {
                     d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"
                   />
                 </svg>
-                রোগী/গ্রাহক
+                {t("queue.patientCustomer")}
               </h3>
 
               {/* Auto Join with Name */}
               <div className="mb-4 p-4 bg-green-50 rounded-lg">
                 <p className="text-sm font-medium text-green-800 mb-3">
-                  ✨ নতুন রোগী? Auto Serial নিন:
+                  ✨ {t("queue.newPatient")}
                 </p>
                 <form
-                  onSubmit={async (e) => {
+                  onSubmit={(e) => {
                     e.preventDefault();
                     if (!patientName.trim()) {
-                      setError("আপনার নাম লিখুন!");
+                      setError(t("queue.nameRequired"));
                       return;
                     }
-                    const result = await joinQueue(
+                    if (
+                      !patientAge ||
+                      Number(patientAge) < 1 ||
+                      Number(patientAge) > 150
+                    ) {
+                      setError(t("queue.ageRequired"));
+                      return;
+                    }
+                    const result = joinQueue(
                       queue!.id,
-                      patientName.trim()
+                      patientName.trim(),
+                      patientMobile.trim() || null,
+                      Number(patientAge)
                     );
+                    if (result.error) {
+                      setError(result.error);
+                      return;
+                    }
                     setAssignedSerial(result.serialNumber);
                     setPatientNumber(result.serialNumber.toString());
                     setViewMode("confirmation");
                     setError("");
+                    // Reset form
+                    setPatientName("");
+                    setPatientMobile("");
+                    setPatientAge("");
                   }}
-                  className="space-y-2"
+                  className="space-y-3"
                 >
-                  <input
-                    type="text"
-                    value={patientName}
-                    onChange={(e) => setPatientName(e.target.value)}
-                    placeholder="আপনার নাম লিখুন"
-                    className="w-full px-4 py-2 border border-green-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                    required
-                  />
+                  <div>
+                    <label
+                      htmlFor="patientName"
+                      className="block text-sm font-medium text-gray-700 mb-1"
+                    >
+                      {t("queue.patientName")}{" "}
+                      <span className="text-red-500">
+                        {t("queue.required")}
+                      </span>
+                    </label>
+                    <input
+                      id="patientName"
+                      type="text"
+                      value={patientName}
+                      onChange={(e) => setPatientName(e.target.value)}
+                      placeholder={t("queue.namePlaceholder")}
+                      className="w-full px-4 py-2 border border-green-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                      required
+                      aria-required="true"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      htmlFor="patientAge"
+                      className="block text-sm font-medium text-gray-700 mb-1"
+                    >
+                      {t("queue.patientAge")}{" "}
+                      <span className="text-red-500">
+                        {t("queue.required")}
+                      </span>
+                    </label>
+                    <input
+                      id="patientAge"
+                      type="number"
+                      value={patientAge}
+                      onChange={(e) => setPatientAge(e.target.value)}
+                      placeholder={t("queue.agePlaceholder")}
+                      min="1"
+                      max="150"
+                      className="w-full px-4 py-2 border border-green-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                      required
+                      aria-required="true"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      htmlFor="patientMobile"
+                      className="block text-sm font-medium text-gray-700 mb-1"
+                    >
+                      {t("queue.patientMobile")}{" "}
+                      <span className="text-gray-400 text-xs">
+                        {t("queue.optional")}
+                      </span>
+                    </label>
+                    <input
+                      id="patientMobile"
+                      type="tel"
+                      value={patientMobile}
+                      onChange={(e) => setPatientMobile(e.target.value)}
+                      placeholder={t("queue.mobilePlaceholder")}
+                      className="w-full px-4 py-2 border border-green-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                    />
+                  </div>
                   <button
                     type="submit"
-                    className="w-full bg-gradient-to-r from-green-500 to-teal-600 text-white py-3 rounded-lg font-semibold hover:from-green-600 hover:to-teal-700 shadow-md"
+                    className="w-full bg-gradient-to-r from-green-500 to-teal-600 text-white py-3 rounded-lg font-semibold hover:from-green-600 hover:to-teal-700 shadow-md transition-all"
                   >
-                    Auto Serial নিন (Auto Join)
+                    {t("queue.autoSerial")}
                   </button>
                 </form>
               </div>
@@ -227,21 +304,23 @@ export default function QueuePage() {
                   <div className="w-full border-t border-gray-300"></div>
                 </div>
                 <div className="relative flex justify-center text-xs">
-                  <span className="px-2 bg-white text-gray-500">অথবা</span>
+                  <span className="px-2 bg-white text-gray-500">
+                    {t("queue.or")}
+                  </span>
                 </div>
               </div>
 
               {/* Existing Serial Lookup */}
               <div className="p-4 bg-blue-50 rounded-lg">
                 <p className="text-sm font-medium text-blue-800 mb-3">
-                  📋 আগে থেকে Serial আছে? Status দেখুন:
+                  📋 {t("queue.existingSerial")}
                 </p>
                 <form onSubmit={handlePatientView} className="space-y-2">
                   <input
                     type="number"
                     value={patientNumber}
                     onChange={(e) => setPatientNumber(e.target.value)}
-                    placeholder="Serial Number দিন"
+                    placeholder={t("queue.serialPlaceholder")}
                     min="1"
                     max="999"
                     className="w-full px-4 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -251,7 +330,7 @@ export default function QueuePage() {
                     type="submit"
                     className="w-full bg-blue-600 text-white py-2 rounded-lg font-semibold hover:bg-blue-700"
                   >
-                    Status দেখুন
+                    {t("queue.viewStatus")}
                   </button>
                 </form>
               </div>
@@ -260,7 +339,7 @@ export default function QueuePage() {
 
           <div className="mt-6 text-center">
             <a href="/" className="text-sm text-gray-500 hover:text-gray-700">
-              ← Admin Panel এ ফিরে যান
+              ← {t("queue.backToAdmin")}
             </a>
           </div>
         </div>
@@ -320,7 +399,7 @@ export default function QueuePage() {
             }}
             className="w-full bg-green-600 text-white py-4 rounded-lg font-semibold hover:bg-green-700 transition-colors shadow-md"
           >
-            Queue Status দেখুন →
+            {t("queue.viewQueueStatus")} →
           </button>
 
           <button

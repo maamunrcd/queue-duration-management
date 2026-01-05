@@ -1,110 +1,130 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import QRCode from "react-qr-code";
 import type { Queue } from "../types";
+import { getAllQueues, deleteQueue } from "../utils/storage";
+import { useTranslation } from "../hooks/useTranslation";
+import { CreateQueueDialog } from "../components/CreateQueueDialog";
+import { Button } from "@/components/ui/button";
 import {
-  saveQueue,
-  generateId,
-  getAllQueues,
-  deleteQueue,
-} from "../utils/firebaseStorage";
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import {
+  Plus,
+  Trash2,
+  ExternalLink,
+  Copy,
+  CheckCircle2,
+  RefreshCw,
+  Languages,
+  LogOut,
+  Sun,
+  Moon,
+} from "lucide-react";
 
 export default function Admin() {
-  const [doctorName, setDoctorName] = useState("");
-  const [secretCode, setSecretCode] = useState("");
-  const [avgTime, setAvgTime] = useState<number | string>(""); // optional initial estimate
+  const navigate = useNavigate();
+  const { t, language, setLanguage } = useTranslation();
   const [generatedQueue, setGeneratedQueue] = useState<Queue | null>(null);
   const [existingQueues, setExistingQueues] = useState<Queue[]>([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const [filteredDoctors, setFilteredDoctors] = useState<string[]>([]);
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [copied, setCopied] = useState(false);
 
-  // Load existing queues
-  const loadQueues = async () => {
-    const data = await getAllQueues();
-    setExistingQueues(Object.values(data.queues));
-  };
-
-  // Get unique doctor names for auto-suggest
-  const getUniqueDoctorNames = (): string[] => {
-    const doctors = new Set<string>();
-    existingQueues.forEach((queue) => {
-      if (queue.doctorName) {
-        doctors.add(queue.doctorName);
-      }
-    });
-    return Array.from(doctors).sort();
-  };
-
-  // Handle doctor name input with auto-suggest
-  const handleDoctorNameChange = (value: string) => {
-    setDoctorName(value);
-    if (value.length > 0) {
-      const allDoctors = getUniqueDoctorNames();
-      const filtered = allDoctors.filter((doctor) =>
-        doctor.toLowerCase().includes(value.toLowerCase())
-      );
-      setFilteredDoctors(filtered);
-      setShowSuggestions(filtered.length > 0);
-    } else {
-      setShowSuggestions(false);
+  // Check if logged in
+  useEffect(() => {
+    const isLoggedIn = sessionStorage.getItem("admin_logged_in") === "true";
+    if (!isLoggedIn) {
+      navigate("/admin/login");
     }
+  }, [navigate]);
+
+  const handleLogout = () => {
+    sessionStorage.removeItem("admin_logged_in");
+    sessionStorage.removeItem("admin_login_time");
+    navigate("/admin/login");
   };
 
-  // Select doctor from suggestions
-  const selectDoctor = (name: string) => {
-    setDoctorName(name);
-    setShowSuggestions(false);
-    setFilteredDoctors([]);
+  const loadQueues = () => {
+    const data = getAllQueues();
+    const queues = Object.values(data.queues);
+    // Sort by creation date (newest first)
+    queues.sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+    setExistingQueues(queues);
   };
+
+  // Group queues by date and doctor for day-wise view
+  const groupQueuesByDay = () => {
+    const grouped: Record<string, Record<string, Queue[]>> = {};
+
+    existingQueues.forEach((queue) => {
+      const date =
+        queue.currentDate ||
+        new Date(queue.createdAt).toISOString().split("T")[0];
+      const doctorName = queue.doctorName;
+
+      if (!grouped[date]) {
+        grouped[date] = {};
+      }
+      if (!grouped[date][doctorName]) {
+        grouped[date][doctorName] = [];
+      }
+      grouped[date][doctorName].push(queue);
+    });
+
+    return grouped;
+  };
+
+  const groupedQueues = groupQueuesByDay();
+  const sortedDates = Object.keys(groupedQueues).sort((a, b) =>
+    b.localeCompare(a)
+  ); // Newest first
 
   useEffect(() => {
-    loadQueues();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    const timer = setTimeout(() => {
+      loadQueues();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, []);
 
-  const handleGenerate = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!doctorName || !secretCode) {
-      alert("দয়া করে সব তথ্য fill করুন!");
-      return;
-    }
-
-    // Get current date for day-wise serial reset
-    const currentDate = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
-
-    const queue: Queue = {
-      id: generateId(),
-      doctorName,
-      secretCode,
-      currentNumber: 0,
-      totalPatientsJoined: 0, // starts at 0, resets each day
-      currentDate, // Track current date for day-wise serial reset
-      status: "idle",
-      avgTimePerPatient: avgTime ? Number(avgTime) : 5, // optional initial estimate, default 5 min
-      patientHistory: [], // track actual service times
-      currentPatientStartTime: null,
-      queueStartTime: null, // will be set when queue starts (first 'active' status)
-      createdAt: new Date().toISOString(),
-      lastUpdated: new Date().toISOString(),
-    };
-
-    await saveQueue(queue);
+  const handleQueueCreated = (queue: Queue) => {
     setGeneratedQueue(queue);
-    await loadQueues();
-
-    // Reset form
-    setDoctorName("");
-    setSecretCode("");
-    setAvgTime("");
+    loadQueues();
   };
 
-  const handleDelete = async (queueId: string) => {
-    if (confirm("এই queue delete করতে চান?")) {
-      await deleteQueue(queueId);
-      await loadQueues();
+  const handleDelete = (queueId: string) => {
+    if (
+      confirm(
+        language === "bn"
+          ? "এই queue delete করতে চান?"
+          : "Do you want to delete this queue?"
+      )
+    ) {
+      deleteQueue(queueId);
+      loadQueues();
       if (generatedQueue?.id === queueId) {
         setGeneratedQueue(null);
       }
     }
+  };
+
+  const copyToClipboard = () => {
+    const queueUrl = generatedQueue
+      ? `${globalThis.location.origin}/queue/${generatedQueue.id}`
+      : "";
+    navigator.clipboard.writeText(queueUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const queueUrl = generatedQueue
@@ -112,255 +132,438 @@ export default function Admin() {
     : "";
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
-      <div className="max-w-4xl mx-auto">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 p-3 sm:p-4 md:p-6">
+      <div className="max-w-7xl mx-auto space-y-4">
         {/* Header */}
-        <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-          <h1 className="text-3xl font-bold text-gray-800 mb-2">
-            Queue Duration Management
-          </h1>
-          <p className="text-gray-600">
-            ডাক্তার/কাউন্টার এর জন্য QR Code তৈরি করুন - Real-time Wait Time
-            Tracking
-          </p>
-        </div>
-
-        {/* Generate New Queue Form */}
-        <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-          <h2 className="text-xl font-semibold mb-4 text-gray-800">
-            নতুন Queue তৈরি করুন
-          </h2>
-
-          <form onSubmit={handleGenerate} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                ডাক্তার/কাউন্টার এর নাম *
-              </label>
-              <div className="relative">
-                <input
-                  type="text"
-                  value={doctorName}
-                  onChange={(e) => handleDoctorNameChange(e.target.value)}
-                  onFocus={() => {
-                    if (doctorName.length > 0) {
-                      const allDoctors = getUniqueDoctorNames();
-                      const filtered = allDoctors.filter((doctor) =>
-                        doctor.toLowerCase().includes(doctorName.toLowerCase())
-                      );
-                      setFilteredDoctors(filtered);
-                      setShowSuggestions(filtered.length > 0);
-                    }
-                  }}
-                  onBlur={() => {
-                    // Delay to allow click on suggestion
-                    setTimeout(() => setShowSuggestions(false), 200);
-                  }}
-                  placeholder="যেমন: ডা. রহমান - কার্ডিওলজি (Type to search existing doctors)"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  required
-                />
-                {showSuggestions && filteredDoctors.length > 0 && (
-                  <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                    {filteredDoctors.map((doctor, idx) => (
-                      <button
-                        key={idx}
-                        type="button"
-                        onClick={() => selectDoctor(doctor)}
-                        className="w-full text-left px-4 py-2 hover:bg-blue-50 focus:bg-blue-50 focus:outline-none"
-                      >
-                        <span className="text-sm text-gray-800">{doctor}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
+        <Card className="border-0 shadow-md">
+          <CardHeader className="pb-3">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="space-y-0.5">
+                <CardTitle className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+                  {t("admin.title")}
+                </CardTitle>
+                <CardDescription className="text-sm sm:text-base">
+                  {language === "bn"
+                    ? "ডাক্তার/কাউন্টার এর জন্য QR Code তৈরি করুন - Real-time Wait Time Tracking"
+                    : "Generate QR Code for Doctor/Counter - Real-time Wait Time Tracking"}
+                </CardDescription>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant={language === "bn" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setLanguage("bn")}
+                  className="gap-2"
+                >
+                  <Languages className="h-4 w-4" />
+                  বাংলা
+                </Button>
+                <Button
+                  variant={language === "en" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setLanguage("en")}
+                  className="gap-2"
+                >
+                  <Languages className="h-4 w-4" />
+                  English
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleLogout}
+                  className="gap-2 text-destructive hover:text-destructive hover:bg-destructive/10"
+                >
+                  <LogOut className="h-4 w-4" />
+                  {language === "bn" ? "Logout" : "Logout"}
+                </Button>
               </div>
             </div>
+          </CardHeader>
+        </Card>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Secret Code (ডাক্তার login এর জন্য) *
-              </label>
-              <input
-                type="text"
-                value={secretCode}
-                onChange={(e) => setSecretCode(e.target.value)}
-                placeholder="যেমন: 1234"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                required
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                এই code দিয়ে শুধু ডাক্তার queue control করতে পারবে
-              </p>
+        {/* Create Queue Button */}
+        <Card className="border-0 shadow-md bg-gradient-to-br from-white to-blue-50/50">
+          <CardContent className="pt-4 pb-4 sm:pt-6 sm:pb-6">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-3 flex-1">
+                <div className="inline-flex items-center justify-center w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-primary/10 shrink-0">
+                  <Plus className="h-6 w-6 sm:h-7 sm:w-7 text-primary" />
+                </div>
+                <div>
+                  <h3 className="text-lg sm:text-xl font-semibold">
+                    {language === "bn"
+                      ? "নতুন Queue তৈরি করুন"
+                      : "Create New Queue"}
+                  </h3>
+                  <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">
+                    {language === "bn"
+                      ? "ডাক্তারের জন্য Queue তৈরি করুন এবং QR Code Generate করুন"
+                      : "Create a queue for doctor and generate QR code"}
+                  </p>
+                </div>
+              </div>
+              <Button
+                onClick={() => setShowCreateDialog(true)}
+                className="w-full sm:w-auto shrink-0"
+                size="lg"
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                {language === "bn" ? "Queue তৈরি করুন" : "Create Queue"}
+              </Button>
             </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                প্রাথমিক আনুমানিক সময় (Optional)
-              </label>
-              <input
-                type="number"
-                value={avgTime}
-                onChange={(e) => setAvgTime(e.target.value)}
-                placeholder="খালি রাখলে default 5 মিনিট"
-                min="0"
-                max="60"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                মিনিট/রোগী (খালি থাকলে 5 min default, পরে automatic calculate
-                হবে)
-              </p>
-            </div>
-
-            <button
-              type="submit"
-              className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors"
-            >
-              QR Code তৈরি করুন
-            </button>
-          </form>
-        </div>
+          </CardContent>
+        </Card>
 
         {/* Generated QR Code */}
         {generatedQueue && (
-          <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-            <h2 className="text-xl font-semibold mb-4 text-green-600">
-              ✅ QR Code তৈরি হয়েছে!
-            </h2>
-
-            <div className="bg-gray-50 p-6 rounded-lg mb-4">
-              <div className="flex flex-col items-center">
-                <div className="bg-white p-4 rounded-lg shadow-sm mb-4">
-                  <QRCode value={queueUrl} size={200} />
-                </div>
-
-                <div className="text-center">
-                  <p className="font-semibold text-lg text-gray-800">
-                    {generatedQueue.doctorName}
-                  </p>
-                  <p className="text-sm text-gray-600 mt-2">
-                    Secret Code:{" "}
-                    <span className="font-mono font-bold">
-                      {generatedQueue.secretCode}
-                    </span>
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    (ডাক্তার কে দিন, রোগীদের দেখাবেন না!)
-                  </p>
-                  <p className="text-xs text-green-600 mt-2">
-                    ℹ️ রোগীরা auto serial পাবে অথবা manual number দিতে পারবে
-                  </p>
-                  <p className="text-xs text-blue-600 mt-1">
-                    মোট Join করেছে:{" "}
-                    <span className="font-bold">
-                      {generatedQueue.totalPatientsJoined}
-                    </span>{" "}
-                    জন
-                  </p>
+          <Card className="border-0 shadow-md animate-in slide-in-from-bottom-4">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-5 w-5 text-green-500" />
+                  <CardTitle className="text-lg sm:text-xl text-green-600">
+                    {language === "bn"
+                      ? "QR Code তৈরি হয়েছে!"
+                      : "QR Code Generated!"}
+                  </CardTitle>
                 </div>
               </div>
-
-              <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-                <p className="text-sm font-medium text-blue-800 mb-2">
-                  📱 QR Scan করলে এই URL open হবে:
-                </p>
-                <a
-                  href={queueUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-blue-600 break-all hover:underline"
-                >
-                  {queueUrl}
-                </a>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <h3 className="font-semibold text-gray-800">পরবর্তী পদক্ষেপ:</h3>
-              <ol className="list-decimal list-inside space-y-1 text-sm text-gray-700">
-                <li>QR Code প্রিন্ট করুন (Right click → Print)</li>
-                <li>ডাক্তারের chamber এ লাগান</li>
-                <li>ডাক্তার কে Secret Code দিন</li>
-                <li>রোগীরা scan করবে এবং serial number enter করবে</li>
-              </ol>
-            </div>
-          </div>
-        )}
-
-        {/* Existing Queues List */}
-        {existingQueues.length > 0 && (
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-semibold text-gray-800">
-                বর্তমান Queues ({existingQueues.length})
-              </h2>
-              <button
-                onClick={() => loadQueues()}
-                className="text-blue-600 hover:text-blue-700 text-sm"
-              >
-                🔄 Refresh
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              {existingQueues.map((queue) => (
-                <div
-                  key={queue.id}
-                  className="p-4 border border-gray-200 rounded-lg hover:border-blue-300 transition-colors"
-                >
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="font-semibold text-gray-800">
-                        {queue.doctorName}
-                      </p>
-                      <p className="text-sm text-gray-600 mt-1">
-                        Current: {queue.currentNumber} | Total Joined:{" "}
-                        {queue.totalPatientsJoined}
-                        <span
-                          className={`ml-3 px-2 py-1 rounded text-xs font-medium ${
-                            queue.status === "active"
-                              ? "bg-green-100 text-green-700"
-                              : queue.status === "paused"
-                              ? "bg-yellow-100 text-yellow-700"
-                              : "bg-gray-100 text-gray-700"
-                          }`}
-                        >
-                          {queue.status.toUpperCase()}
-                        </span>
-                      </p>
-                      <p className="text-xs text-gray-500 mt-1">
-                        Avg Time: {queue.avgTimePerPatient} min/patient
-                        {queue.patientHistory &&
-                          queue.patientHistory.length > 0 &&
-                          ` (${
-                            queue.patientHistory.filter((p) => p.completedAt)
-                              .length
-                          } completed)`}
-                      </p>
-                    </div>
-                    <div className="flex gap-2">
-                      <a
-                        href={`/queue/${queue.id}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-600 hover:text-blue-700 text-sm"
-                      >
-                        Open
-                      </a>
-                      <button
-                        onClick={() => handleDelete(queue.id)}
-                        className="text-red-600 hover:text-red-700 text-sm"
-                      >
-                        Delete
-                      </button>
+            </CardHeader>
+            <CardContent className="space-y-4 sm:space-y-5">
+              <div className="flex flex-col md:flex-row gap-4 sm:gap-5">
+                <div className="flex-1 space-y-3">
+                  <div className="bg-muted/50 p-4 sm:p-5 rounded-lg flex justify-center">
+                    <div className="bg-white p-3 sm:p-4 rounded-lg shadow-sm">
+                      <QRCode
+                        value={queueUrl}
+                        size={160}
+                        className="sm:w-[180px] sm:h-[180px]"
+                      />
                     </div>
                   </div>
+                  <div className="text-center space-y-1.5">
+                    <p className="font-semibold text-base sm:text-lg">
+                      {generatedQueue.doctorName}
+                    </p>
+                    <div className="flex items-center justify-center gap-2">
+                      <Badge
+                        variant="secondary"
+                        className="font-mono text-xs sm:text-sm"
+                      >
+                        {generatedQueue.secretCode}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {language === "bn"
+                        ? "ডাক্তার কে দিন, রোগীদের দেখাবেন না!"
+                        : "Give to doctor only, don't show to patients!"}
+                    </p>
+                  </div>
                 </div>
-              ))}
-            </div>
-          </div>
+
+                <Separator orientation="vertical" className="hidden md:block" />
+
+                <div className="flex-1 space-y-3">
+                  <div className="space-y-2">
+                    <Label className="text-sm">
+                      {language === "bn" ? "Queue URL" : "Queue URL"}
+                    </Label>
+                    <div className="flex gap-2">
+                      <Input
+                        value={queueUrl}
+                        readOnly
+                        className="font-mono text-xs sm:text-sm"
+                      />
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        onClick={copyToClipboard}
+                        className="shrink-0"
+                      >
+                        {copied ? (
+                          <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        ) : (
+                          <Copy className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => window.open(queueUrl, "_blank")}
+                  >
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    {language === "bn" ? "Queue খুলুন" : "Open Queue"}
+                  </Button>
+                  <div className="bg-muted/50 p-3 sm:p-4 rounded-lg space-y-1.5 text-xs sm:text-sm">
+                    <p className="font-medium">
+                      {language === "bn" ? "পরবর্তী পদক্ষেপ:" : "Next Steps:"}
+                    </p>
+                    <ol className="list-decimal list-inside space-y-0.5 text-muted-foreground">
+                      <li>
+                        {language === "bn"
+                          ? "QR Code প্রিন্ট করুন"
+                          : "Print QR Code"}
+                      </li>
+                      <li>
+                        {language === "bn"
+                          ? "ডাক্তারের chamber এ লাগান"
+                          : "Place in doctor's chamber"}
+                      </li>
+                      <li>
+                        {language === "bn"
+                          ? "ডাক্তার কে Secret Code দিন"
+                          : "Give Secret Code to doctor"}
+                      </li>
+                    </ol>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Existing Queues - Day-wise Grouped */}
+        {existingQueues.length > 0 && (
+          <Card className="border-0 shadow-md">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-xl sm:text-2xl">
+                  {language === "bn" ? "বিদ্যমান Queues" : "Existing Queues"} (
+                  {existingQueues.length})
+                </CardTitle>
+                <Button variant="ghost" size="sm" onClick={loadQueues}>
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  {language === "bn" ? "Refresh" : "Refresh"}
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="p-3 sm:p-4 md:p-6">
+              <div className="space-y-4 sm:space-y-5">
+                {sortedDates.map((date) => (
+                  <div key={date} className="space-y-3">
+                    <div className="flex items-center gap-2 pb-2 border-b border-border/50">
+                      <h3 className="text-base sm:text-lg font-semibold">
+                        {new Date(date).toLocaleDateString(
+                          language === "bn" ? "bn-BD" : "en-US",
+                          {
+                            weekday: "short",
+                            year: "numeric",
+                            month: "short",
+                            day: "numeric",
+                          }
+                        )}
+                      </h3>
+                      <Badge variant="outline" className="text-xs">
+                        {Object.values(groupedQueues[date]).flat().length}{" "}
+                        {language === "bn" ? "Queues" : "Queues"}
+                      </Badge>
+                    </div>
+                    {Object.entries(groupedQueues[date]).map(
+                      ([doctorName, queues]) => {
+                        const morningSessions = queues.filter(
+                          (q) => (q.sessionType || "morning") === "morning"
+                        ).length;
+                        const eveningSessions = queues.filter(
+                          (q) => (q.sessionType || "morning") === "evening"
+                        ).length;
+                        return (
+                          <div key={doctorName} className="space-y-2">
+                            <h4 className="text-sm sm:text-base font-medium text-muted-foreground flex items-center gap-2 flex-wrap">
+                              <span>{doctorName}</span>
+                              {morningSessions > 0 && (
+                                <Badge
+                                  variant="default"
+                                  className="text-xs font-normal flex items-center gap-1"
+                                >
+                                  <Sun className="h-3 w-3" />
+                                  {morningSessions}{" "}
+                                  {language === "bn" ? "সকাল" : "Morning"}
+                                </Badge>
+                              )}
+                              {eveningSessions > 0 && (
+                                <Badge
+                                  variant="secondary"
+                                  className="text-xs font-normal flex items-center gap-1"
+                                >
+                                  <Moon className="h-3 w-3" />
+                                  {eveningSessions}{" "}
+                                  {language === "bn" ? "বিকাল" : "Evening"}
+                                </Badge>
+                              )}
+                            </h4>
+                            <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2">
+                              {queues.map((queue) => (
+                                <Card
+                                  key={queue.id}
+                                  className="border hover:shadow-md transition-shadow"
+                                >
+                                  <CardHeader className="pb-2 pt-3 px-3 sm:px-4">
+                                    <div className="flex items-start justify-between gap-2">
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                                          <CardTitle className="text-base sm:text-lg truncate">
+                                            {queue.doctorName}
+                                          </CardTitle>
+                                          <div
+                                            className={`text-xs shrink-0 flex items-center gap-1.5 px-2 py-1 rounded-md border-2 transition-all ${
+                                              (queue.sessionType ||
+                                                "morning") === "morning"
+                                                ? "border-primary/30 bg-primary/5 text-primary"
+                                                : "border-secondary/30 bg-secondary/5 text-secondary-foreground"
+                                            }`}
+                                          >
+                                            {(queue.sessionType ||
+                                              "morning") === "morning" ? (
+                                              <>
+                                                <Sun className="h-3 w-3" />
+                                                <span className="font-medium">
+                                                  {language === "bn"
+                                                    ? "সকাল"
+                                                    : "Morning"}
+                                                </span>
+                                              </>
+                                            ) : (
+                                              <>
+                                                <Moon className="h-3 w-3" />
+                                                <span className="font-medium">
+                                                  {language === "bn"
+                                                    ? "বিকাল"
+                                                    : "Evening"}
+                                                </span>
+                                              </>
+                                            )}
+                                          </div>
+                                          <Badge
+                                            variant={
+                                              queue.status === "active"
+                                                ? "success"
+                                                : queue.status === "paused"
+                                                ? "warning"
+                                                : queue.status === "ended"
+                                                ? "destructive"
+                                                : "secondary"
+                                            }
+                                            className="text-xs shrink-0"
+                                          >
+                                            {queue.status.toUpperCase()}
+                                          </Badge>
+                                        </div>
+                                        <div className="space-y-1">
+                                          <div className="flex items-center gap-2 text-xs sm:text-sm text-muted-foreground flex-wrap">
+                                            <span>
+                                              {language === "bn"
+                                                ? "বর্তমান"
+                                                : "Current"}
+                                              :{" "}
+                                              <strong className="text-foreground">
+                                                {queue.currentNumber}
+                                              </strong>
+                                            </span>
+                                            <span>•</span>
+                                            <span>
+                                              {language === "bn"
+                                                ? "মোট"
+                                                : "Total"}
+                                              :{" "}
+                                              <strong className="text-foreground">
+                                                {queue.totalPatientsJoined}
+                                              </strong>
+                                            </span>
+                                            {queue.serialLimit && (
+                                              <>
+                                                <span>•</span>
+                                                <span>
+                                                  {language === "bn"
+                                                    ? "লিমিট"
+                                                    : "Limit"}
+                                                  :{" "}
+                                                  <strong className="text-foreground">
+                                                    {queue.serialLimit}
+                                                  </strong>
+                                                </span>
+                                              </>
+                                            )}
+                                          </div>
+                                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                            <span>
+                                              {language === "bn"
+                                                ? "গড়"
+                                                : "Avg"}
+                                              :{" "}
+                                              <strong className="text-foreground">
+                                                {queue.avgTimePerPatient.toFixed(
+                                                  1
+                                                )}
+                                              </strong>{" "}
+                                              min
+                                            </span>
+                                          </div>
+                                          <div className="pt-1">
+                                            <p className="text-xs font-mono text-muted-foreground break-all">
+                                              <span className="text-muted-foreground/70">
+                                                {language === "bn"
+                                                  ? "কোড"
+                                                  : "Code"}
+                                                :{" "}
+                                              </span>
+                                              <span className="text-primary font-semibold">
+                                                {queue.secretCode}
+                                              </span>
+                                            </p>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </CardHeader>
+                                  <CardContent className="pt-0 pb-3 px-3 sm:px-4">
+                                    <div className="flex items-center justify-end gap-1">
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        onClick={() =>
+                                          window.open(
+                                            `/queue/${queue.id}`,
+                                            "_blank"
+                                          )
+                                        }
+                                      >
+                                        <ExternalLink className="h-4 w-4" />
+                                      </Button>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                                        onClick={() => handleDelete(queue.id)}
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                      </Button>
+                                    </div>
+                                  </CardContent>
+                                </Card>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      }
+                    )}
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
         )}
       </div>
+
+      {/* Create Queue Dialog */}
+      <CreateQueueDialog
+        open={showCreateDialog}
+        onOpenChange={setShowCreateDialog}
+        onQueueCreated={handleQueueCreated}
+        language={language}
+      />
     </div>
   );
 }
